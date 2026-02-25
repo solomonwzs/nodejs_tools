@@ -2,14 +2,14 @@
   "listen": 4000,
   "models": [
     {
-      "name": "gpt-4",
+      "names": ["gpt-4", "gpt-4-turbo"],
       "target": "http://api.openai.com/v1",
       "ext_headers": {
         "X-Custom-Header": "custom-value"
       }
     },
     {
-      "name": "gpt-3.5-turbo",
+      "names": ["gpt-3.5-turbo"],
       "target": "http://api.openai.com/v1",
       "http_proxy": "http://127.0.0.1:8080"
     }

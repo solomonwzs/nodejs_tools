@@ -5,7 +5,7 @@ import { URL } from "url";
 import { Readable } from "stream";
 
 interface ModelConfig {
-  name: string;
+  names: string[];
   target: string;
   http_proxy?: string;
   ext_headers?: Record<string, string>;
@@ -37,7 +37,7 @@ function loadConfig(): Config {
 }
 
 function findModelConfig(modelName: string): ModelConfig | undefined {
-  return config.models.find((m) => m.name === modelName);
+  return config.models.find((m) => m.names.includes(modelName));
 }
 
 async function proxyRequest(
@@ -239,13 +239,8 @@ async function handleRequest(
     return;
   }
 
-  if (path.startsWith("/chat/completions")) {
-    await handleChatCompletions(req, res);
-    return;
-  }
-
-  res.writeHead(404);
-  res.end(JSON.stringify({ error: "Not Found" }));
+  await handleChatCompletions(req, res);
+  return;
 }
 
 function main() {
@@ -264,7 +259,7 @@ function main() {
   server.listen(config.listen, () => {
     console.log(`AdamsProxy server listening on port ${config.listen}`);
     console.log(
-      `Configured models: ${config.models.map((m) => m.name).join(", ")}`,
+      `Configured models: ${config.models.flatMap((m) => m.names).join(", ")}`,
     );
   });
 }
