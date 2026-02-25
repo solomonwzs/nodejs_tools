@@ -1,0 +1,25 @@
+{
+  "providers": {
+    "nrp": {
+      "id": "nrp",
+      "name": "NRP Nautilus",
+      "type": "openai",
+      "base_url": "http://127.0.0.1:3000",
+      "api_key": "dummy-key",
+      "models": [
+        {
+          "id": "glm-5",
+          "name": "GLM 5",
+          "context_window": 256000,
+          "default_max_tokens": 4096
+        }
+      ]
+    }
+  },
+  "models": {
+    "large": { "model": "glm_5_fp8", "provider": "nrp" }
+  },
+  "recent_models": {
+    "large": [{ "model": "glm_5_fp8", "provider": "nrp" }]
+  }
+}
