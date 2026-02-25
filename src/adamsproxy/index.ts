@@ -15,6 +15,11 @@ interface Config {
   models: ModelConfig[];
 }
 
+interface ModelInfo {
+  id: string;
+  [key: string]: any;
+}
+
 let config: Config;
 
 function loadConfig(): Config {
@@ -49,7 +54,7 @@ async function proxyRequest(
       const path = req.url || "/";
 
       let proxyTarget = target;
-      let proxyPath = path;
+      let proxyPath = target.pathname + path;
 
       if (httpProxy) {
         proxyTarget = new URL(httpProxy);
@@ -88,7 +93,85 @@ async function proxyRequest(
   });
 }
 
-async function handleRequest(
+async function fetchModelsFromTarget(
+  targetUrl: string,
+  httpProxy?: string,
+  extHeaders?: Record<string, string>,
+): Promise<ModelInfo[]> {
+  return new Promise((resolve, reject) => {
+    const target = new URL(targetUrl);
+    const modelsPath = target.pathname + "/models";
+
+    let proxyTarget = target;
+    let proxyPath = modelsPath;
+
+    if (httpProxy) {
+      proxyTarget = new URL(httpProxy);
+      proxyPath = targetUrl + "/models";
+    }
+
+    const options: http.RequestOptions = {
+      hostname: proxyTarget.hostname,
+      port: proxyTarget.port,
+      path: proxyPath,
+      method: "GET",
+      headers: {
+        host: target.host,
+        ...extHeaders,
+      },
+    };
+
+    const req = http.request(options, (res) => {
+      let body = "";
+      res.on("data", (chunk) => {
+        body += chunk;
+      });
+      res.on("end", () => {
+        try {
+          const data = JSON.parse(body);
+          resolve(data.data || []);
+        } catch (e) {
+          console.error(
+            `Failed to parse models response from ${targetUrl}:`,
+            e,
+          );
+          resolve([]);
+        }
+      });
+    });
+
+    req.on("error", (e) => {
+      console.error(`Failed to fetch models from ${targetUrl}:`, e);
+      resolve([]);
+    });
+
+    req.end();
+  });
+}
+
+async function handleModelsInfo(res: http.ServerResponse): Promise<void> {
+  const allModels: ModelInfo[] = [];
+  const seenTargets = new Set<string>();
+
+  for (const modelConfig of config.models) {
+    if (seenTargets.has(modelConfig.target)) {
+      continue;
+    }
+    seenTargets.add(modelConfig.target);
+
+    const models = await fetchModelsFromTarget(
+      modelConfig.target,
+      modelConfig.http_proxy,
+      modelConfig.ext_headers,
+    );
+    allModels.push(...models);
+  }
+
+  res.writeHead(200, { "Content-Type": "application/json" });
+  res.end(JSON.stringify({ object: "list", data: allModels }));
+}
+
+async function handleChatCompletions(
   req: http.IncomingMessage,
   res: http.ServerResponse,
 ): Promise<void> {
@@ -124,7 +207,6 @@ async function handleRequest(
     `[${new Date().toISOString()}] Proxying request for model: ${modelName} -> ${modelConfig.target}`,
   );
 
-  // Re-create request with body for proxyRequest
   const mockReq = new Readable() as unknown as http.IncomingMessage;
   mockReq.push(body);
   mockReq.push(null);
@@ -141,6 +223,26 @@ async function handleRequest(
     modelConfig.http_proxy,
     modelConfig.ext_headers,
   );
+}
+
+async function handleRequest(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+): Promise<void> {
+  const path = req.url || "/";
+
+  if (path === "/$/models_info") {
+    await handleModelsInfo(res);
+    return;
+  }
+
+  if (path.startsWith("/chat/completions")) {
+    await handleChatCompletions(req, res);
+    return;
+  }
+
+  res.writeHead(404);
+  res.end(JSON.stringify({ error: "Not Found" }));
 }
 
 function main() {

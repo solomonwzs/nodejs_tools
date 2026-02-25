@@ -27,3 +27,13 @@
     ]
 }
 ```
+
+## 工具接口
+
+### /$/models_info
+
+服务启动后，当访问 `/$/models_info` 时，服务会根据配置中的 `target`，通过 HTTP GET 调用 `http://target-endpoint.org/0/v1/models`（如果配置中有 `http_proxy` 和 `ext_header`，需要通过 `http_proxy` 转发以及调整请求头部），请求会返回如下 json 内容：
+```json
+{"object":"list","data":[{"id":"glm_5_fp8","max_model_len":202752}]}
+```
+将所有 `target` 返回内容中的 `data` 提取出来，并合并成 json 返回
