@@ -1,5 +1,6 @@
 import http from "http";
 import fs from "fs";
+import path from "path";
 import { URL } from "url";
 import { Readable } from "stream";
 
@@ -23,7 +24,9 @@ interface ModelInfo {
 let config: Config;
 
 function loadConfig(): Config {
-  const configPath = process.argv[2] || "config.json";
+  const homeDir = process.env.HOME || process.env.USERPROFILE || "";
+  const defaultConfigPath = path.join(homeDir, ".config", "adamsproxy.json");
+  const configPath = process.argv[2] || defaultConfigPath;
   try {
     const content = fs.readFileSync(configPath, "utf-8");
     return JSON.parse(content);
