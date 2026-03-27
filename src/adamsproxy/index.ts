@@ -2,7 +2,8 @@ import http from "http";
 import fs from "fs";
 import path from "path";
 import { URL } from "url";
-import { Readable } from "stream";
+const ALLOWED_FORWARD_HEADERS = ["content-type", "content-length", "authorization"];
+const MAX_BODY_SIZE = 10 * 1024 * 1024; // 10MB
 
 interface ModelConfig {
   names: string[];
@@ -44,55 +45,63 @@ async function proxyRequest(
   req: http.IncomingMessage,
   res: http.ServerResponse,
   targetUrl: string,
+  body: Buffer,
   httpProxy?: string,
   extHeaders?: Record<string, string>,
 ): Promise<void> {
+  const target = new URL(targetUrl);
+  const reqPath = req.url || "/";
+
+  let proxyTarget = target;
+  let proxyPath: string;
+  if (httpProxy) {
+    proxyTarget = new URL(httpProxy);
+    proxyPath = targetUrl.replace(/\/+$/, "") + reqPath;
+  } else {
+    const basePath = target.pathname.replace(/\/+$/, "");
+    proxyPath = basePath + reqPath;
+  }
+
+  const filteredHeaders: Record<string, string> = {};
+  for (const key of ALLOWED_FORWARD_HEADERS) {
+    const value = req.headers[key];
+    if (typeof value === "string") {
+      filteredHeaders[key] = value;
+    }
+  }
+
   return new Promise((resolve, reject) => {
-    let body = "";
-    req.on("data", (chunk) => {
-      body += chunk;
+    const options: http.RequestOptions = {
+      hostname: proxyTarget.hostname,
+      port: proxyTarget.port,
+      path: proxyPath,
+      method: req.method,
+      headers: {
+        ...filteredHeaders,
+        host: target.host,
+        ...extHeaders,
+      },
+    };
+
+    const proxyReq = http.request(options, (proxyRes) => {
+      res.writeHead(proxyRes.statusCode || 500, proxyRes.headers);
+      proxyRes.pipe(res);
+      proxyRes.on("end", resolve);
     });
-    req.on("end", () => {
-      const target = new URL(targetUrl);
-      const path = req.url || "/";
 
-      let proxyTarget = target;
-      let proxyPath = target.pathname + path;
-
-      if (httpProxy) {
-        proxyTarget = new URL(httpProxy);
-        proxyPath = targetUrl + path;
-      }
-
-      const options: http.RequestOptions = {
-        hostname: proxyTarget.hostname,
-        port: proxyTarget.port,
-        path: proxyPath,
-        method: req.method,
-        headers: {
-          ...req.headers,
-          host: target.host,
-          ...extHeaders,
-        },
-      };
-
-      const proxyReq = http.request(options, (proxyRes) => {
-        res.writeHead(proxyRes.statusCode || 500, proxyRes.headers);
-        proxyRes.pipe(res);
-        proxyRes.on("end", resolve);
-      });
-
-      proxyReq.on("error", (e) => {
-        console.error("Proxy request error:", e);
-        res.writeHead(502);
+    proxyReq.on("error", (e) => {
+      console.error("Proxy request error:", e);
+      if (!res.headersSent) {
+        res.writeHead(502, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: "Bad Gateway" }));
-        reject(e);
-      });
-
-      proxyReq.write(body);
-      proxyReq.end();
+      }
+      reject(e);
     });
-    req.on("error", reject);
+
+    if (body.length > 0) {
+      proxyReq.write(body);
+    }
+    proxyReq.end();
   });
 }
 
@@ -103,14 +112,15 @@ async function fetchModelsFromTarget(
 ): Promise<ModelInfo[]> {
   return new Promise((resolve, reject) => {
     const target = new URL(targetUrl);
-    const modelsPath = target.pathname + "/models";
+    const basePath = target.pathname.replace(/\/+$/, "");
+    const modelsPath = basePath + "/models";
 
     let proxyTarget = target;
     let proxyPath = modelsPath;
 
     if (httpProxy) {
       proxyTarget = new URL(httpProxy);
-      proxyPath = targetUrl + "/models";
+      proxyPath = targetUrl.replace(/\/+$/, "") + "/models";
     }
 
     const options: http.RequestOptions = {
@@ -178,30 +188,39 @@ async function handleChatCompletions(
   req: http.IncomingMessage,
   res: http.ServerResponse,
 ): Promise<void> {
-  let body = "";
+  const chunks: Buffer[] = [];
+  let bodySize = 0;
   for await (const chunk of req) {
-    body += chunk;
+    const buf = Buffer.from(chunk);
+    bodySize += buf.length;
+    if (bodySize > MAX_BODY_SIZE) {
+      res.writeHead(413, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Payload Too Large" }));
+      return;
+    }
+    chunks.push(buf);
   }
+  const body = Buffer.concat(chunks);
 
   let requestBody: any;
   try {
-    requestBody = JSON.parse(body);
+    requestBody = JSON.parse(body.toString());
   } catch (e) {
-    res.writeHead(400);
+    res.writeHead(400, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ error: "Invalid JSON" }));
     return;
   }
 
   const modelName = requestBody.model;
   if (!modelName) {
-    res.writeHead(400);
+    res.writeHead(400, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ error: "Missing model field" }));
     return;
   }
 
   const modelConfig = findModelConfig(modelName);
   if (!modelConfig) {
-    res.writeHead(404);
+    res.writeHead(404, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ error: `Model ${modelName} not found` }));
     return;
   }
@@ -210,19 +229,11 @@ async function handleChatCompletions(
     `[${new Date().toISOString()}] Proxying request for model: ${modelName} -> ${modelConfig.target}`,
   );
 
-  const mockReq = new Readable() as unknown as http.IncomingMessage;
-  mockReq.push(body);
-  mockReq.push(null);
-  Object.assign(mockReq, {
-    method: req.method,
-    url: req.url,
-    headers: req.headers,
-  });
-
   await proxyRequest(
-    mockReq,
+    req,
     res,
     modelConfig.target,
+    body,
     modelConfig.http_proxy,
     modelConfig.ext_headers,
   );
@@ -232,15 +243,20 @@ async function handleRequest(
   req: http.IncomingMessage,
   res: http.ServerResponse,
 ): Promise<void> {
-  const path = req.url || "/";
+  const urlPath = req.url || "/";
 
-  if (path === "/$/models_info") {
+  if (urlPath === "/$/models_info") {
     await handleModelsInfo(res);
     return;
   }
 
-  await handleChatCompletions(req, res);
-  return;
+  if (urlPath === "/v1/chat/completions") {
+    await handleChatCompletions(req, res);
+    return;
+  }
+
+  res.writeHead(404, { "Content-Type": "application/json" });
+  res.end(JSON.stringify({ error: "Not Found" }));
 }
 
 function main() {
@@ -251,8 +267,10 @@ function main() {
       await handleRequest(req, res);
     } catch (e) {
       console.error("Request handling error:", e);
-      res.writeHead(500);
-      res.end(JSON.stringify({ error: "Internal Server Error" }));
+      if (!res.headersSent) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Internal Server Error" }));
+      }
     }
   });
 
