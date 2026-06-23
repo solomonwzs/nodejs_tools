@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "build_helloworld": "node src/helloworld/esbuild.js",
-    "build_adamsproxy": "node src/adamsproxy/esbuild.js"
+    "build_adamsproxy": "node src/adamsproxy/esbuild.js",
+    "build_adamsproxy2": "node src/adamsproxy2/esbuild.js"
   },
   "devDependencies": {
     "@types/node": "^25.3.0",

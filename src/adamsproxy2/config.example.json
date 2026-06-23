@@ -1,0 +1,13 @@
+{
+    "listen": 4000,
+    "ext_headers": {
+        "X-Foo": "foo",
+        "X-Bar": "bar"
+    },
+    "http_proxy": "http://127.0.0.1:4001",
+    "base_url": "http://llmproxy.com",
+    "models": [
+        {"name": "model_0", "id": 0},
+        {"name": "model_1", "id": 1}
+    ]
+}
