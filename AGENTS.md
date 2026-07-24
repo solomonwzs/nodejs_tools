@@ -19,6 +19,8 @@ This is a TypeScript tools collection project using esbuild for bundling. Each t
 |------|-------------|
 | `helloworld` | Minimal template/scaffold tool |
 | `adamsproxy` | OpenAI-compatible API reverse proxy. Routes `/v1/chat/completions` requests to different backends based on model name in the JSON body. Config read from `~/.config/adamsproxy.json` or CLI arg. Exposes `/$/models_info` endpoint. Supports per-model HTTP proxy and custom headers. |
+| `adamsproxy2` | Variant of adamsproxy using `base_url/service/{id}` routing pattern. Config read from `~/.config/adamsproxy2.json` or CLI arg. Exposes `/v1/models` endpoint. |
+| `httpproxy` | General-purpose HTTP/HTTPS forward proxy. Transparently forwards requests to target servers. Supports CONNECT method for HTTPS tunneling. Optionally logs request/response details to a JSONL file. Config passed as CLI arg. |
 
 ## Project Structure
 
