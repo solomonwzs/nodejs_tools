@@ -7,7 +7,8 @@
     "build_helloworld": "node src/helloworld/esbuild.js",
     "build_adamsproxy": "node src/adamsproxy/esbuild.js",
     "build_adamsproxy2": "node src/adamsproxy2/esbuild.js",
-    "build_httpproxy": "node src/httpproxy/esbuild.js"
+    "build_httpproxy": "node src/httpproxy/esbuild.js",
+    "build_gongfengproxy": "node src/gongfengproxy/esbuild.js"
   },
   "devDependencies": {
     "@types/node": "^25.3.0",

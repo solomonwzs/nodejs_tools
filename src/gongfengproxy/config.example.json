@@ -1,0 +1,27 @@
+{
+  "port": 4001,
+  "http_proxy": "http://127.0.0.1:8080",
+  "baseUrl": "https://api.example.com",
+  "models": [
+    {
+      "id": "hy-3",
+      "name": "Hy3",
+      "reasoning": true,
+      "input": ["text"],
+      "contextWindow": 224000,
+      "maxTokens": 64000,
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "headers": {
+        "X-Model-Name": "Hy3"
+      }
+    }
+  ],
+  "username": "your-username",
+  "deviceId": "your-device-id",
+  "authToken": "your-auth-token"
+}
