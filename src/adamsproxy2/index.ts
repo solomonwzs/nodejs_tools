@@ -1,23 +1,24 @@
-import http from "http";
 import fs from "fs";
+import http from "http";
+import https from "https";
+import net from "net";
 import path from "path";
-import { URL } from "url";
+import tls from "tls";
 
 const ALLOWED_FORWARD_HEADERS = [
   "content-type",
   "content-length",
   "authorization",
 ];
-const MAX_BODY_SIZE = 10 * 1024 * 1024; // 10MB
+const MAX_BODY_SIZE = 10 * 1024 * 1024;
 
 function log(msg: string): void {
   console.log(`[${new Date().toISOString()}] ${msg}`);
 }
 
-// Verbose logs gated behind DEBUG=1 so production stays quiet.
 function debug(msg: string): void {
   if (process.env.DEBUG) {
-    console.log(`[${new Date().toISOString()}] [debug] ${msg}`);
+    log(`[debug] ${msg}`);
   }
 }
 
@@ -30,19 +31,30 @@ interface Config {
   listen: number;
   base_url: string;
   http_proxy?: string;
+  https_proxy?: string;
   ext_headers?: Record<string, string>;
   models: ModelConfig[];
 }
 
 let config: Config;
 
+function validateProxyUrl(proxyUrl: string | undefined, fieldName: string): void {
+  if (!proxyUrl) return;
+
+  const parsed = new URL(proxyUrl);
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error(`${fieldName} must use http: or https:`);
+  }
+}
+
 function loadConfig(): Config {
   const homeDir = process.env.HOME || process.env.USERPROFILE || "";
   const defaultConfigPath = path.join(homeDir, ".config", "adamsproxy2.json");
   const configPath = process.argv[2] || defaultConfigPath;
   try {
-    const content = fs.readFileSync(configPath, "utf-8");
-    const parsed = JSON.parse(content);
+    const parsed: Config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+    validateProxyUrl(parsed.http_proxy, "http_proxy");
+    validateProxyUrl(parsed.https_proxy, "https_proxy");
     log(`Loaded config from ${configPath}`);
     return parsed;
   } catch (e) {
@@ -52,12 +64,151 @@ function loadConfig(): Config {
 }
 
 function findModelConfig(modelName: string): ModelConfig | undefined {
-  return config.models.find((m) => m.name === modelName);
+  return config.models.find((model) => model.name === modelName);
 }
 
 function composeTargetUrl(model: ModelConfig): string {
-  const base = config.base_url.replace(/\/+$/, "");
-  return `${base}/service/${model.id}`;
+  return `${config.base_url.replace(/\/+$/, "")}/service/${model.id}`;
+}
+
+function selectProxy(target: URL): string | undefined {
+  return target.protocol === "https:" ? config.https_proxy : config.http_proxy;
+}
+
+interface UpstreamRequest {
+  url: string;
+  method: string;
+  headers: http.OutgoingHttpHeaders;
+  body?: Buffer;
+}
+
+async function requestUpstream(
+  request: UpstreamRequest,
+  handleResponse: (response: http.IncomingMessage) => Promise<void>,
+): Promise<void> {
+  const target = new URL(request.url);
+  const selectedProxyUrl = selectProxy(target);
+  const proxyTarget = selectedProxyUrl ? new URL(selectedProxyUrl) : target;
+  const targetPort = Number(target.port || (target.protocol === "https:" ? 443 : 80));
+  const usesTunnel = Boolean(selectedProxyUrl && target.protocol === "https:");
+  const proxyTransport = proxyTarget.protocol === "https:" ? https : http;
+
+  debug(
+    `>> ${request.method} ${request.url} (${selectedProxyUrl ? `via ${selectedProxyUrl}` : "direct"})`,
+  );
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let tunnelSocket: net.Socket | undefined;
+    let tlsSocket: tls.TLSSocket | undefined;
+    let tunnelAgent: https.Agent | undefined;
+
+    const cleanupTunnel = () => {
+      tunnelAgent?.destroy();
+      tlsSocket?.destroy();
+      if (tunnelSocket && !tunnelSocket.destroyed) {
+        tunnelSocket.destroy();
+      }
+    };
+    const complete = () => {
+      if (settled) return;
+      settled = true;
+      cleanupTunnel();
+      resolve();
+    };
+    const fail = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      cleanupTunnel();
+      reject(error);
+    };
+    const consumeResponse = (response: http.IncomingMessage) => {
+      handleResponse(response).then(complete, fail);
+    };
+    const writeRequest = (clientRequest: http.ClientRequest) => {
+      clientRequest.once("error", fail);
+      if (request.body && request.body.length > 0) {
+        clientRequest.write(request.body);
+      }
+      clientRequest.end();
+    };
+
+    if (usesTunnel) {
+      const connectReq = proxyTransport.request({
+        hostname: proxyTarget.hostname,
+        port: proxyTarget.port || (proxyTarget.protocol === "https:" ? 443 : 80),
+        method: "CONNECT",
+        path: `${target.hostname}:${targetPort}`,
+        headers: { host: `${target.hostname}:${targetPort}` },
+      });
+
+      connectReq.once("connect", (connectRes, socket, head) => {
+        tunnelSocket = socket;
+        if (connectRes.statusCode !== 200) {
+          fail(new Error(`Proxy CONNECT failed with status ${connectRes.statusCode}`));
+          return;
+        }
+        if (head.length > 0) {
+          socket.unshift(head);
+        }
+
+        tlsSocket = tls.connect({
+          socket,
+          ...(net.isIP(target.hostname) ? {} : { servername: target.hostname }),
+        });
+        tlsSocket.once("error", fail);
+        tlsSocket.once("secureConnect", () => {
+          if (!tlsSocket) return;
+
+          tunnelAgent = new https.Agent({ keepAlive: false });
+          tunnelAgent.createConnection = () => tlsSocket!;
+          const clientRequest = https.request(
+            {
+              hostname: target.hostname,
+              port: targetPort,
+              path: target.pathname + target.search,
+              method: request.method,
+              headers: request.headers,
+              agent: tunnelAgent,
+            },
+            consumeResponse,
+          );
+          writeRequest(clientRequest);
+        });
+      });
+      connectReq.once("error", fail);
+      connectReq.end();
+      return;
+    }
+
+    const transport = selectedProxyUrl
+      ? proxyTransport
+      : target.protocol === "https:"
+        ? https
+        : http;
+    const clientRequest = transport.request(
+      {
+        hostname: proxyTarget.hostname,
+        port: proxyTarget.port || (proxyTarget.protocol === "https:" ? 443 : 80),
+        path: selectedProxyUrl ? request.url : target.pathname + target.search,
+        method: request.method,
+        headers: request.headers,
+      },
+      consumeResponse,
+    );
+    writeRequest(clientRequest);
+  });
+}
+
+function forwardedHeaders(req: http.IncomingMessage): Record<string, string> {
+  const headers: Record<string, string> = {};
+  for (const key of ALLOWED_FORWARD_HEADERS) {
+    const value = req.headers[key];
+    if (typeof value === "string") {
+      headers[key] = value;
+    }
+  }
+  return headers;
 }
 
 async function proxyRequest(
@@ -65,67 +216,37 @@ async function proxyRequest(
   res: http.ServerResponse,
   targetUrl: string,
   body: Buffer,
-  httpProxy?: string,
   extHeaders?: Record<string, string>,
 ): Promise<void> {
   const target = new URL(targetUrl);
-  const reqPath = req.url || "/";
-
-  let proxyTarget = target;
-  let proxyPath: string;
-  if (httpProxy) {
-    proxyTarget = new URL(httpProxy);
-    proxyPath = targetUrl.replace(/\/+$/, "") + reqPath;
-  } else {
-    const basePath = target.pathname.replace(/\/+$/, "");
-    proxyPath = basePath + reqPath;
-  }
-
-  const filteredHeaders: Record<string, string> = {};
-  for (const key of ALLOWED_FORWARD_HEADERS) {
-    const value = req.headers[key];
-    if (typeof value === "string") {
-      filteredHeaders[key] = value;
-    }
-  }
-
-  return new Promise((resolve, reject) => {
-    const options: http.RequestOptions = {
-      hostname: proxyTarget.hostname,
-      port: proxyTarget.port,
-      path: proxyPath,
-      method: req.method,
+  await requestUpstream(
+    {
+      url: targetUrl,
+      method: req.method || "POST",
       headers: {
-        ...filteredHeaders,
+        ...forwardedHeaders(req),
         host: target.host,
         ...extHeaders,
       },
-    };
-
-    debug(
-      `>> ${req.method} ${targetUrl}${reqPath} (via ${httpProxy ? httpProxy : "direct"})`,
-    );
-
-    const proxyReq = http.request(options, (proxyRes) => {
-      debug(`<< ${proxyRes.statusCode || 500} ${targetUrl}`);
-      res.writeHead(proxyRes.statusCode || 500, proxyRes.headers);
+      body,
+    },
+    (proxyRes) => new Promise((resolve, reject) => {
+      debug(`<< ${proxyRes.statusCode || 502} ${targetUrl}`);
+      res.writeHead(proxyRes.statusCode || 502, proxyRes.headers);
+      res.once("finish", resolve);
+      res.once("close", resolve);
+      proxyRes.once("error", reject);
       proxyRes.pipe(res);
-      proxyRes.on("end", resolve);
-    });
-
-    proxyReq.on("error", (e) => {
-      console.error("Proxy request error:", e);
-      if (!res.headersSent) {
-        res.writeHead(502, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "Bad Gateway" }));
-      }
-      reject(e);
-    });
-
-    if (body.length > 0) {
-      proxyReq.write(body);
+    }),
+  ).catch((error: Error) => {
+    console.error("Proxy request error:", error);
+    if (!res.headersSent) {
+      res.writeHead(502, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Bad Gateway" }));
+    } else if (!res.writableEnded && !res.destroyed) {
+      res.destroy(error);
     }
-    proxyReq.end();
+    throw error;
   });
 }
 
@@ -136,123 +257,85 @@ async function handleProxy(
   const chunks: Buffer[] = [];
   let bodySize = 0;
   for await (const chunk of req) {
-    const buf = Buffer.from(chunk);
-    bodySize += buf.length;
+    const buffer = Buffer.from(chunk);
+    bodySize += buffer.length;
     if (bodySize > MAX_BODY_SIZE) {
-      debug(`Payload too large: ${bodySize} bytes`);
       res.writeHead(413, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: "Payload Too Large" }));
       return;
     }
-    chunks.push(buf);
+    chunks.push(buffer);
   }
   const body = Buffer.concat(chunks);
-  debug(`Request body size: ${body.length} bytes`);
 
-  let requestBody: any;
+  let requestBody: { model?: unknown };
   try {
     requestBody = JSON.parse(body.toString());
-  } catch (e) {
-    debug(`Invalid JSON body: ${body.toString().slice(0, 200)}`);
+  } catch {
     res.writeHead(400, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ error: "Invalid JSON" }));
     return;
   }
 
-  const modelName = requestBody.model;
-  if (!modelName) {
-    debug("Missing model field in request body");
+  if (typeof requestBody.model !== "string" || requestBody.model.length === 0) {
     res.writeHead(400, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ error: "Missing model field" }));
     return;
   }
 
-  const modelConfig = findModelConfig(modelName);
-  if (!modelConfig) {
-    debug(`Model not found: ${modelName}`);
+  const model = findModelConfig(requestBody.model);
+  if (!model) {
     res.writeHead(404, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ error: `Model ${modelName} not found` }));
+    res.end(JSON.stringify({ error: `Model ${requestBody.model} not found` }));
     return;
   }
 
-  const targetUrl = composeTargetUrl(modelConfig);
-  log(`model=${modelName} id=${modelConfig.id} -> ${targetUrl}`);
-
-  await proxyRequest(
-    req,
-    res,
-    targetUrl,
-    body,
-    config.http_proxy,
-    config.ext_headers,
-  );
+  const targetUrl = composeTargetUrl(model) + (req.url || "/");
+  log(`model=${requestBody.model} id=${model.id} -> ${targetUrl}`);
+  await proxyRequest(req, res, targetUrl, body, config.ext_headers);
 }
 
 interface ModelInfo {
   id: string;
-  [key: string]: any;
+  [key: string]: unknown;
 }
 
 async function fetchModelsFromTarget(
   targetUrl: string,
-  httpProxy?: string,
   extHeaders?: Record<string, string>,
 ): Promise<ModelInfo[]> {
-  return new Promise((resolve) => {
-    const target = new URL(targetUrl);
-    const basePath = target.pathname.replace(/\/+$/, "");
-    const modelsPath = basePath + "/v1/models";
+  const modelsUrl = `${targetUrl.replace(/\/+$/, "")}/v1/models`;
+  const target = new URL(modelsUrl);
 
-    let proxyTarget = target;
-    let proxyPath = modelsPath;
-    if (httpProxy) {
-      proxyTarget = new URL(httpProxy);
-      proxyPath = targetUrl.replace(/\/+$/, "") + "/v1/models";
-    }
-
-    const options: http.RequestOptions = {
-      hostname: proxyTarget.hostname,
-      port: proxyTarget.port,
-      path: proxyPath,
-      method: "GET",
-      headers: {
-        host: target.host,
-        ...extHeaders,
+  try {
+    let models: ModelInfo[] = [];
+    await requestUpstream(
+      {
+        url: modelsUrl,
+        method: "GET",
+        headers: { host: target.host, ...extHeaders },
       },
-    };
-
-    debug(
-      `>> GET ${targetUrl}/v1/models (via ${httpProxy ? httpProxy : "direct"})`,
+      (response) => new Promise((resolve, reject) => {
+        const chunks: Buffer[] = [];
+        response.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+        response.once("error", reject);
+        response.once("end", () => {
+          try {
+            const data = JSON.parse(Buffer.concat(chunks).toString()) as { data?: ModelInfo[] };
+            models = data.data || [];
+            debug(`<< ${response.statusCode || 502} ${modelsUrl} (${models.length} models)`);
+            resolve();
+          } catch (error) {
+            reject(error);
+          }
+        });
+      }),
     );
-
-    const req = http.request(options, (res) => {
-      let body = "";
-      res.on("data", (chunk) => {
-        body += chunk;
-      });
-      res.on("end", () => {
-        try {
-          const data = JSON.parse(body);
-          const models = data.data || [];
-          debug(`<< ${res.statusCode} ${targetUrl}/v1/models (${models.length} models)`);
-          resolve(models);
-        } catch (e) {
-          console.error(
-            `Failed to parse models response from ${targetUrl}:`,
-            e,
-          );
-          resolve([]);
-        }
-      });
-    });
-
-    req.on("error", (e) => {
-      console.error(`Failed to fetch models from ${targetUrl}:`, e);
-      resolve([]);
-    });
-
-    req.end();
-  });
+    return models;
+  } catch (error) {
+    console.error(`Failed to fetch models from ${targetUrl}:`, error);
+    return [];
+  }
 }
 
 async function handleModelsInfo(res: http.ServerResponse): Promise<void> {
@@ -262,17 +345,11 @@ async function handleModelsInfo(res: http.ServerResponse): Promise<void> {
   for (const model of config.models) {
     const targetUrl = composeTargetUrl(model);
     if (seenTargets.has(targetUrl)) {
-      debug(`Skipping duplicate target: ${targetUrl}`);
       continue;
     }
     seenTargets.add(targetUrl);
 
-    const models = await fetchModelsFromTarget(
-      targetUrl,
-      config.http_proxy,
-      config.ext_headers,
-    );
-    debug(`Got ${models.length} models from ${targetUrl}`);
+    const models = await fetchModelsFromTarget(targetUrl, config.ext_headers);
     allModels.push(...models);
   }
 
@@ -285,8 +362,7 @@ async function handleRequest(
   req: http.IncomingMessage,
   res: http.ServerResponse,
 ): Promise<void> {
-  const parsed = new URL(req.url || "/", "http://localhost");
-  const urlPath = parsed.pathname;
+  const urlPath = new URL(req.url || "/", "http://localhost").pathname;
 
   log(`<-- ${req.method} ${req.url}`);
   res.on("finish", () => {
@@ -307,14 +383,14 @@ async function handleRequest(
   res.end(JSON.stringify({ error: "Not Found" }));
 }
 
-function main() {
+function main(): void {
   config = loadConfig();
 
   const server = http.createServer(async (req, res) => {
     try {
       await handleRequest(req, res);
-    } catch (e) {
-      console.error("Request handling error:", e);
+    } catch (error) {
+      console.error("Request handling error:", error);
       if (!res.headersSent) {
         res.writeHead(500, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: "Internal Server Error" }));
@@ -322,26 +398,23 @@ function main() {
     }
   });
 
-  server.on("error", (e) => {
-    console.error("Server error:", e);
+  server.on("error", (error) => {
+    console.error("Server error:", error);
   });
 
-  // Safety nets: never exit on unexpected exceptions.
-  process.on("uncaughtException", (e) => {
-    console.error("Uncaught exception:", e);
+  process.on("uncaughtException", (error) => {
+    console.error("Uncaught exception:", error);
   });
 
-  process.on("unhandledRejection", (e) => {
-    console.error("Unhandled rejection:", e);
+  process.on("unhandledRejection", (error) => {
+    console.error("Unhandled rejection:", error);
   });
 
   server.listen(config.listen, () => {
     log(
-      `AdamsProxy2 listening on :${config.listen} (base_url=${config.base_url}${config.http_proxy ? `, http_proxy=${config.http_proxy}` : ""})`,
+      `AdamsProxy2 listening on :${config.listen} (base_url=${config.base_url}${config.http_proxy ? `, http_proxy=${config.http_proxy}` : ""}${config.https_proxy ? `, https_proxy=${config.https_proxy}` : ""})`,
     );
-    log(
-      `models: ${config.models.map((m) => `${m.name}(id=${m.id})`).join(", ")}`,
-    );
+    log(`models: ${config.models.map((model) => `${model.name}(id=${model.id})`).join(", ")}`);
   });
 }
 

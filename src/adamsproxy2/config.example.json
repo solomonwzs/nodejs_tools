@@ -5,6 +5,7 @@
         "X-Bar": "bar"
     },
     "http_proxy": "http://127.0.0.1:4001",
+    "https_proxy": "http://127.0.0.1:4001",
     "base_url": "http://llmproxy.com",
     "models": [
         {"name": "model_0", "id": 0},
