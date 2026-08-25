@@ -1,0 +1,44 @@
+{
+  "providers": {
+    "adams": {
+      "baseUrl": "http://localhost:4003/adams/v1",
+      "api": "openai-completions",
+      "apiKey": "api-key",
+      "models": [
+        { "id": "glm_5_fp8", "contextWindow": 202752 }
+      ]
+    },
+    "gongfeng": {
+      "baseUrl": "http://localhost:4003/gongfeng/v1",
+      "api": "openai-completions",
+      "apiKey": "api-key",
+      "models": [
+        {
+          "id": "hy-3",
+          "name": "Hy3",
+          "reasoning": true,
+          "input": ["text"],
+          "contextWindow": 224000,
+          "maxTokens": 64000,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          }
+        }
+      ]
+    },
+    "providers0": {
+      "baseUrl": "http://localhost:4003/comm/providers0/v1",
+      "api": "openai-completions",
+      "apiKey": "api-key",
+      "models": [
+        {
+          "id": "deepseek-v4-flash-0731",
+          "contextWindow": 150000
+        }
+      ]
+    }
+  }
+}

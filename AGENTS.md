@@ -21,6 +21,7 @@ This is a TypeScript tools collection project using esbuild for bundling. Each t
 | `adamsproxy` | OpenAI-compatible API reverse proxy. Routes `/v1/chat/completions` requests to different backends based on model name in the JSON body. Config read from `~/.config/adamsproxy.json` or CLI arg. Exposes `/$/models_info` endpoint. Supports per-model HTTP proxy and custom headers. |
 | `adamsproxy2` | OpenAI-compatible proxy using `base_url/service/{id}` routing. Routes chat/messages by model name and exposes `/v1/models`. Supports protocol-specific `http_proxy` / `https_proxy`; HTTPS upstreams use CONNECT tunnels. Config read from `~/.config/adamsproxy2.json` or CLI arg. |
 | `gongfengproxy` | OpenAI chat-completions proxy. Matches `models[].id`, injects configured Gongfeng credentials and per-model headers, and supports protocol-specific `http_proxy` / `https_proxy` with SSE passthrough. Config read from `~/.config/gongfengproxy.json` or CLI arg. |
+| `tc-llmproxy` | Unified Adams, Gongfeng, and common-provider LLM proxy with provider-scoped routes, dynamic Adams model discovery, Pi model-config generation, SSE passthrough, and protocol-specific outbound proxies. Config read from `~/.config/tc-llmproxy.json` or CLI arg. |
 | `httpproxy` | General-purpose HTTP/HTTPS forward proxy. Transparently forwards requests to target servers. Supports CONNECT method for HTTPS tunneling. Optionally logs request/response details to a JSONL file. Config passed as CLI arg. |
 
 ## Project Structure
