@@ -1,4 +1,5 @@
 import http from "http";
+import os from "os";
 import { AdamsRegistry } from "./adams.js";
 import { generatePiModels } from "./pi-models.js";
 import {
@@ -57,6 +58,36 @@ async function readModelBody(
   }
 
   return { body, model: (parsed as Record<string, unknown>).model as string };
+}
+
+async function readImageBody(
+  req: http.IncomingMessage,
+): Promise<{ body: Buffer; model: string }> {
+  const request = await readModelBody(req);
+  const parsed = JSON.parse(request.body.toString()) as Record<string, unknown>;
+  if (typeof parsed.prompt !== "string" || parsed.prompt.length === 0) {
+    throw new HttpError(400, "Missing prompt field");
+  }
+  return request;
+}
+
+function gongfengImageHeaders(
+  config: GongfengProxyConfig,
+  target: URL,
+  model?: string,
+  body?: Buffer,
+): http.OutgoingHttpHeaders {
+  return {
+    accept: "application/json",
+    host: target.host,
+    "X-Username": config.username,
+    "DEVICE-ID": config.deviceId,
+    "OAUTH-TOKEN": config.authToken,
+    "x-platform": `${os.type()}/${os.machine()}`,
+    "x-user-agent": "gen-image.sh",
+    ...(model ? { "X-Model-Name": model } : {}),
+    ...(body ? { "content-type": "application/json", "content-length": String(body.length) } : {}),
+  };
 }
 
 async function forwardToClient(
@@ -155,6 +186,39 @@ async function handleGongfeng(
   }, `provider=gongfeng model=${modelId}`);
 }
 
+async function handleImageModelList(
+  res: http.ServerResponse,
+  config: GongfengProxyConfig,
+): Promise<void> {
+  const targetUrl = joinUrl(config.baseUrl, "/v1/image-model-configs");
+  const target = new URL(targetUrl);
+  await forwardToClient(res, {
+    url: targetUrl,
+    method: "GET",
+    headers: gongfengImageHeaders(config, target),
+    httpProxy: config.httpProxy,
+    httpsProxy: config.httpsProxy,
+  }, "provider=gongfeng-image models");
+}
+
+async function handleImageGeneration(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  config: GongfengProxyConfig,
+): Promise<void> {
+  const { body, model } = await readImageBody(req);
+  const targetUrl = joinUrl(config.baseUrl, "/v1/images/generations");
+  const target = new URL(targetUrl);
+  await forwardToClient(res, {
+    url: targetUrl,
+    method: "POST",
+    headers: gongfengImageHeaders(config, target, model, body),
+    body,
+    httpProxy: config.httpProxy,
+    httpsProxy: config.httpsProxy,
+  }, `provider=gongfeng-image model=${model}`);
+}
+
 async function handleCommon(
   req: http.IncomingMessage,
   res: http.ServerResponse,
@@ -204,7 +268,7 @@ async function handleRequest(
   const parsedUrl = new URL(req.url || "/", "http://localhost");
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
 
-  if (parsedUrl.pathname === "/$pi.models.json") {
+  if (parsedUrl.pathname === "/cmd/gen-pi-models-json") {
     if (req.method !== "GET") {
       res.writeHead(405, { "Content-Type": "application/json", Allow: "GET" });
       res.end(JSON.stringify({ error: "Method Not Allowed" }));
@@ -212,6 +276,26 @@ async function handleRequest(
     }
     await adamsRegistry?.refresh();
     sendJson(res, 200, generatePiModels(config, adamsRegistry));
+    return;
+  }
+  if (parsedUrl.pathname === "/cmd/list-gen-image-models") {
+    if (req.method !== "GET") {
+      res.writeHead(405, { "Content-Type": "application/json", Allow: "GET" });
+      res.end(JSON.stringify({ error: "Method Not Allowed" }));
+      return;
+    }
+    if (!config.gongfengProxy) throw new HttpError(404, "Not Found");
+    await handleImageModelList(res, config.gongfengProxy);
+    return;
+  }
+  if (parsedUrl.pathname === "/cmd/gen-image") {
+    if (req.method !== "POST") {
+      res.writeHead(405, { "Content-Type": "application/json", Allow: "POST" });
+      res.end(JSON.stringify({ error: "Method Not Allowed" }));
+      return;
+    }
+    if (!config.gongfengProxy) throw new HttpError(404, "Not Found");
+    await handleImageGeneration(req, res, config.gongfengProxy);
     return;
   }
   if (parsedUrl.pathname.startsWith("/adams/")) {

@@ -21,7 +21,11 @@ export function generatePiModels(
       baseUrl: `http://localhost:${config.listen}/gongfeng/v1`,
       api: "openai-completions",
       apiKey: "api-key",
-      models: config.gongfengProxy.models.map(({ headers: _headers, ...model }) => model),
+      models: config.gongfengProxy.models.map(({ headers: _headers, ...model }) =>
+        model.id.toLowerCase().startsWith("gpt")
+          ? { ...model, compat: { supportsFinishReason: false } }
+          : model,
+      ),
     };
   }
 
