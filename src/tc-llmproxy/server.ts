@@ -176,7 +176,10 @@ async function handleGongfeng(
       return;
     }
     if (!gongfengRegistry.available) throw new HttpError(503, "Gongfeng service unavailable");
-    sendJson(res, 200, { object: "list", data: gongfengRegistry.allModels });
+    sendJson(res, 200, {
+      object: "list",
+      data: gongfengRegistry.allModels.map(({ imageOnly: _imageOnly, ...model }) => model),
+    });
     return;
   }
   if (pathname !== "/v1/chat/completions" && pathname !== "/v1/images/generations") {

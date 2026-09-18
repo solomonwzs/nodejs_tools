@@ -153,7 +153,7 @@ export class GongfengRegistry {
       if (!Array.isArray(parsed)) {
         throw new Error(`${modelsUrl} response must be an array`);
       }
-      result = parsed.map((model) => transformModel(model, modelsUrl));
+      result = parsed.map((model) => ({ ...transformModel(model, modelsUrl), imageOnly: true }));
     });
     return result;
   }

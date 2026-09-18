@@ -31,6 +31,9 @@ export interface GongfengModel {
   contextWindow: number;
   maxTokens: number;
   cost: ModelCost;
+  // True for text-to-image models discovered from /v1/image-model-configs;
+  // they are excluded from chat/openai-completions model lists.
+  imageOnly?: boolean;
   headers?: Record<string, string>;
 }
 
