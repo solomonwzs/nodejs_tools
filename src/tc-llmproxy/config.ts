@@ -65,6 +65,10 @@ function validateConfig(value: unknown): asserts value is Config {
     throw new Error("listen must be an integer between 1 and 65535");
   }
 
+  if (root.allowLan !== undefined && typeof root.allowLan !== "boolean") {
+    throw new Error("allowLan must be a boolean");
+  }
+
   if (root.adamsProxy !== undefined) {
     const adams = requireObject(root.adamsProxy, "adamsProxy");
     validateProxySettings(adams, "adamsProxy");
@@ -94,24 +98,6 @@ function validateConfig(value: unknown): asserts value is Config {
     requireString(gongfeng.username, "gongfengProxy.username");
     requireString(gongfeng.deviceId, "gongfengProxy.deviceId");
     requireString(gongfeng.authToken, "gongfengProxy.authToken");
-    if (!Array.isArray(gongfeng.models)) throw new Error("gongfengProxy.models must be an array");
-    validateUniqueModelIds(gongfeng.models, "gongfengProxy.models", (model, index) => {
-      const field = `gongfengProxy.models[${index}]`;
-      const id = requireString(model.id, `${field}.id`);
-      requireString(model.name, `${field}.name`);
-      if (typeof model.reasoning !== "boolean") throw new Error(`${field}.reasoning must be a boolean`);
-      if (!Array.isArray(model.input) || !model.input.every((item) => typeof item === "string")) {
-        throw new Error(`${field}.input must be a string array`);
-      }
-      if (typeof model.contextWindow !== "number") throw new Error(`${field}.contextWindow must be a number`);
-      if (typeof model.maxTokens !== "number") throw new Error(`${field}.maxTokens must be a number`);
-      const cost = requireObject(model.cost, `${field}.cost`);
-      for (const key of ["input", "output", "cacheRead", "cacheWrite"]) {
-        if (typeof cost[key] !== "number") throw new Error(`${field}.cost.${key} must be a number`);
-      }
-      validateHeaders(model.headers, `${field}.headers`);
-      return id;
-    });
   }
 
   if (root.commProxy !== undefined) {

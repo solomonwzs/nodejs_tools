@@ -1,6 +1,7 @@
 import http from "http";
 import os from "os";
 import { AdamsRegistry } from "./adams.js";
+import { GongfengRegistry } from "./gongfeng.js";
 import { generatePiModels } from "./pi-models.js";
 import {
   allowlistedHeaders,
@@ -125,6 +126,15 @@ async function handleAdams(
 ): Promise<void> {
   const upstreamPath = parsedUrl.pathname.slice("/adams".length) + parsedUrl.search;
   const pathname = parsedUrl.pathname.slice("/adams".length);
+  if (pathname === "/v1/models") {
+    if (req.method !== "GET") {
+      sendJson(res, 405, { error: "Method Not Allowed" });
+      return;
+    }
+    if (!adamsRegistry.available) throw new HttpError(503, "Adams service unavailable");
+    sendJson(res, 200, { object: "list", data: adamsRegistry.piModels });
+    return;
+  }
   if (pathname !== "/v1/chat/completions" && pathname !== "/v1/messages") {
     throw new HttpError(404, "Not Found");
   }
@@ -157,14 +167,27 @@ async function handleGongfeng(
   res: http.ServerResponse,
   parsedUrl: URL,
   config: GongfengProxyConfig,
+  gongfengRegistry: GongfengRegistry,
 ): Promise<void> {
   const pathname = parsedUrl.pathname.slice("/gongfeng".length);
+  if (pathname === "/v1/models") {
+    if (req.method !== "GET") {
+      sendJson(res, 405, { error: "Method Not Allowed" });
+      return;
+    }
+    if (!gongfengRegistry.available) throw new HttpError(503, "Gongfeng service unavailable");
+    sendJson(res, 200, { object: "list", data: gongfengRegistry.allModels });
+    return;
+  }
   if (pathname !== "/v1/chat/completions") {
     throw new HttpError(404, "Not Found");
   }
+  if (!gongfengRegistry.available) {
+    throw new HttpError(503, "Gongfeng service unavailable");
+  }
 
   const { body, model: modelId } = await readModelBody(req);
-  const model = config.models.find((item) => item.id === modelId);
+  const model = gongfengRegistry.findModel(modelId);
   if (!model) throw new HttpError(404, `Gongfeng model ${modelId} not found`);
   const targetUrl = joinUrl(config.baseUrl, pathname + parsedUrl.search);
   const target = new URL(targetUrl);
@@ -237,6 +260,15 @@ async function handleCommon(
   const provider = providers.find((item) => item.name === providerName);
   if (!provider) throw new HttpError(404, `Common provider ${providerName} not found`);
 
+  if (match[2] === "/v1/models") {
+    if (req.method !== "GET") {
+      sendJson(res, 405, { error: "Method Not Allowed" });
+      return;
+    }
+    sendJson(res, 200, { object: "list", data: provider.models.map((model) => ({ ...model })) });
+    return;
+  }
+
   const { body, model } = await readModelBody(req);
   if (!provider.models.some((item) => item.id === model)) {
     throw new HttpError(404, `Model ${model} not found in provider ${providerName}`);
@@ -264,6 +296,7 @@ async function handleRequest(
   res: http.ServerResponse,
   config: Config,
   adamsRegistry?: AdamsRegistry,
+  gongfengRegistry?: GongfengRegistry,
 ): Promise<void> {
   const parsedUrl = new URL(req.url || "/", "http://localhost");
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
@@ -275,7 +308,8 @@ async function handleRequest(
       return;
     }
     await adamsRegistry?.refresh();
-    sendJson(res, 200, generatePiModels(config, adamsRegistry));
+    await gongfengRegistry?.refresh();
+    sendJson(res, 200, generatePiModels(config, adamsRegistry, gongfengRegistry));
     return;
   }
   if (parsedUrl.pathname === "/cmd/list-gen-image-models") {
@@ -304,8 +338,8 @@ async function handleRequest(
     return;
   }
   if (parsedUrl.pathname.startsWith("/gongfeng/")) {
-    if (!config.gongfengProxy) throw new HttpError(404, "Not Found");
-    await handleGongfeng(req, res, parsedUrl, config.gongfengProxy);
+    if (!config.gongfengProxy || !gongfengRegistry) throw new HttpError(404, "Not Found");
+    await handleGongfeng(req, res, parsedUrl, config.gongfengProxy, gongfengRegistry);
     return;
   }
   if (parsedUrl.pathname.startsWith("/comm/")) {
@@ -319,10 +353,11 @@ async function handleRequest(
 export function createServer(
   config: Config,
   adamsRegistry?: AdamsRegistry,
+  gongfengRegistry?: GongfengRegistry,
 ): http.Server {
   const server = http.createServer(async (req, res) => {
     try {
-      await handleRequest(req, res, config, adamsRegistry);
+      await handleRequest(req, res, config, adamsRegistry, gongfengRegistry);
     } catch (error) {
       if (error instanceof HttpError) {
         if (!res.headersSent) sendJson(res, error.statusCode, { error: error.message });

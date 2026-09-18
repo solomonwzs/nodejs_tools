@@ -36,7 +36,6 @@ export interface GongfengModel {
 
 export interface GongfengProxyConfig extends ProxySettings {
   baseUrl: string;
-  models: GongfengModel[];
   username: string;
   deviceId: string;
   authToken: string;
@@ -55,6 +54,7 @@ export interface CommonProxyConfig extends ProxySettings {
 
 export interface Config {
   listen: number;
+  allowLan?: boolean;
   adamsProxy?: AdamsProxyConfig;
   gongfengProxy?: GongfengProxyConfig;
   commProxy?: CommonProxyConfig[];

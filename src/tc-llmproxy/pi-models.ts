@@ -1,9 +1,11 @@
 import { AdamsRegistry } from "./adams.js";
+import { GongfengRegistry } from "./gongfeng.js";
 import { Config } from "./types.js";
 
 export function generatePiModels(
   config: Config,
   adamsRegistry?: AdamsRegistry,
+  gongfengRegistry?: GongfengRegistry,
 ): Record<string, unknown> {
   const providers: Record<string, unknown> = {};
 
@@ -16,12 +18,12 @@ export function generatePiModels(
     };
   }
 
-  if (config.gongfengProxy) {
+  if (config.gongfengProxy && gongfengRegistry) {
     providers.gongfeng = {
       baseUrl: `http://localhost:${config.listen}/gongfeng/v1`,
       api: "openai-completions",
       apiKey: "api-key",
-      models: config.gongfengProxy.models.map(({ headers: _headers, ...model }) =>
+      models: gongfengRegistry.allModels.map(({ headers: _headers, ...model }) =>
         model.id.toLowerCase().startsWith("gpt")
           ? { ...model, compat: { supportsFinishReason: false } }
           : model,
