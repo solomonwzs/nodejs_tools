@@ -179,14 +179,17 @@ async function handleGongfeng(
     sendJson(res, 200, { object: "list", data: gongfengRegistry.allModels });
     return;
   }
-  if (pathname !== "/v1/chat/completions") {
+  if (pathname !== "/v1/chat/completions" && pathname !== "/v1/images/generations") {
     throw new HttpError(404, "Not Found");
   }
   if (!gongfengRegistry.available) {
     throw new HttpError(503, "Gongfeng service unavailable");
   }
 
-  const { body, model: modelId } = await readModelBody(req);
+  const isImage = pathname === "/v1/images/generations";
+  const { body, model: modelId } = isImage
+    ? await readImageBody(req)
+    : await readModelBody(req);
   const model = gongfengRegistry.findModel(modelId);
   if (!model) throw new HttpError(404, `Gongfeng model ${modelId} not found`);
   const targetUrl = joinUrl(config.baseUrl, pathname + parsedUrl.search);
@@ -195,11 +198,13 @@ async function handleGongfeng(
   await forwardToClient(res, {
     url: targetUrl,
     method: req.method || "POST",
-    headers: {
-      ...allowlistedHeaders(req),
-      host: target.host,
-      ...model.headers,
-      "X-Username": config.username,
+    headers: isImage
+      ? gongfengImageHeaders(config, target, modelId, body)
+      : {
+          ...allowlistedHeaders(req),
+          host: target.host,
+          ...model.headers,
+          "X-Username": config.username,
       "DEVICE-ID": config.deviceId,
       "OAUTH-TOKEN": config.authToken,
     },
