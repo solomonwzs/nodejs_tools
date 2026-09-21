@@ -20,8 +20,10 @@ function transformModel(value: unknown, label: string): GongfengModel {
     input: Array.isArray(raw.input) && raw.input.every((item) => typeof item === "string")
       ? (raw.input as string[])
       : ["text"],
-    contextWindow: typeof raw.contextWindow === "number" ? raw.contextWindow : 0,
-    maxTokens: typeof raw.maxTokens === "number" ? raw.maxTokens : 0,
+    // Omit contextWindow/maxTokens (rely on pi defaults) when upstream does not
+    // provide them, instead of sending 0.
+    ...(typeof raw.contextWindow === "number" ? { contextWindow: raw.contextWindow } : {}),
+    ...(typeof raw.maxTokens === "number" ? { maxTokens: raw.maxTokens } : {}),
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     // Upstream expects X-Model-Name to equal the model display name.
     headers: { "X-Model-Name": name },

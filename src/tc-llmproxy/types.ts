@@ -28,8 +28,8 @@ export interface GongfengModel {
   name: string;
   reasoning: boolean;
   input: string[];
-  contextWindow: number;
-  maxTokens: number;
+  contextWindow?: number;
+  maxTokens?: number;
   cost: ModelCost;
   // True for text-to-image models discovered from /v1/image-model-configs;
   // they are excluded from chat/openai-completions model lists.

@@ -23,9 +23,9 @@ export function generatePiModels(
       baseUrl: `http://localhost:${config.listen}/gongfeng/v1`,
       api: "openai-completions",
       apiKey: "api-key",
-      models: gongfengRegistry.allModels
-        .filter((model) => !model.imageOnly)
-        .map(({ headers: _headers, imageOnly: _imageOnly, ...model }) =>
+      // Include both chat and text-to-image models (imageOnly) in the gongfeng
+      // provider; image models are served via /gongfeng/v1/images/generations.
+      models: gongfengRegistry.allModels.map(({ headers: _headers, imageOnly: _imageOnly, ...model }) =>
           model.id.toLowerCase().startsWith("gpt")
             ? { ...model, compat: { supportsFinishReason: false } }
             : model,
