@@ -14,7 +14,7 @@ export function generatePiModels(
       baseUrl: `http://localhost:${config.listen}/adams/v1`,
       api: "openai-completions",
       apiKey: "api-key",
-      models: adamsRegistry.piModels,
+      models: adamsRegistry.piModels.map((model) => ({ ...model, reasoning: true })),
     };
   }
 
