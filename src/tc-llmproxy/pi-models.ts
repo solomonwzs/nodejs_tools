@@ -25,11 +25,16 @@ export function generatePiModels(
       apiKey: "api-key",
       // Include both chat and text-to-image models (imageOnly) in the gongfeng
       // provider; image models are served via /gongfeng/v1/images/generations.
-      models: gongfengRegistry.allModels.map(({ headers: _headers, imageOnly: _imageOnly, ...model }) =>
-          model.id.toLowerCase().startsWith("gpt")
-            ? { ...model, compat: { supportsFinishReason: false } }
-            : model,
-        ),
+      models: gongfengRegistry.allModels.map(({ headers: _headers, imageOnly: _imageOnly, ...model }) => {
+        const modelId = model.id.toLowerCase();
+        if (modelId.startsWith("gpt")) {
+          return { ...model, compat: { supportsFinishReason: false } };
+        }
+        if (modelId.startsWith("deepseek")) {
+          return { ...model, compat: { supportsDeveloperRole: false } };
+        }
+        return model;
+      }),
     };
   }
 
