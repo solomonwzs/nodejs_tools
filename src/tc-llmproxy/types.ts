@@ -57,7 +57,7 @@ export interface CommonProxyConfig extends ProxySettings {
 
 export interface Config {
   listen: number;
-  allowLan?: boolean;
+  ip?: string;
   adamsProxy?: AdamsProxyConfig;
   gongfengProxy?: GongfengProxyConfig;
   commProxy?: CommonProxyConfig[];

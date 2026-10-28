@@ -65,9 +65,7 @@ function validateConfig(value: unknown): asserts value is Config {
     throw new Error("listen must be an integer between 1 and 65535");
   }
 
-  if (root.allowLan !== undefined && typeof root.allowLan !== "boolean") {
-    throw new Error("allowLan must be a boolean");
-  }
+  if (root.ip !== undefined) requireString(root.ip, "ip");
 
   if (root.adamsProxy !== undefined) {
     const adams = requireObject(root.adamsProxy, "adamsProxy");

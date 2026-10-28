@@ -15,7 +15,7 @@ async function main(): Promise<void> {
   await gongfengRegistry?.initialize();
 
   const server = createServer(config, adamsRegistry, gongfengRegistry);
-  const host = config.allowLan ? "0.0.0.0" : "127.0.0.1";
+  const host = config.ip ?? "localhost";
   server.listen(config.listen, host, () => {
     console.log(`[${new Date().toISOString()}] TC LLM Proxy listening on ${host}:${config.listen}`);
     if (adamsRegistry) {

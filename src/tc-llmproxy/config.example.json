@@ -1,6 +1,6 @@
 {
   "listen": 4003,
-  "allowLan": false,
+  "ip": "localhost",
   "adamsProxy": {
     "httpProxy": "http://127.0.0.1:4001",
     "httpsProxy": "http://127.0.0.1:4001",

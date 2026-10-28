@@ -8,10 +8,14 @@ export function generatePiModels(
   gongfengRegistry?: GongfengRegistry,
 ): Record<string, unknown> {
   const providers: Record<string, unknown> = {};
+  const ip = config.ip ?? "localhost";
+  // IPv6 literals need brackets in URLs (listen() uses the unbracketed address).
+  const host = ip.includes(":") && !ip.startsWith("[") ? `[${ip}]` : ip;
+  const baseUrl = `http://${host}:${config.listen}`;
 
   if (config.adamsProxy && adamsRegistry) {
     providers.adams = {
-      baseUrl: `http://localhost:${config.listen}/adams/v1`,
+      baseUrl: `${baseUrl}/adams/v1`,
       api: "openai-completions",
       apiKey: "api-key",
       models: adamsRegistry.piModels.map((model) => ({ ...model, reasoning: true })),
@@ -20,7 +24,7 @@ export function generatePiModels(
 
   if (config.gongfengProxy && gongfengRegistry) {
     providers.gongfeng = {
-      baseUrl: `http://localhost:${config.listen}/gongfeng/v1`,
+      baseUrl: `${baseUrl}/gongfeng/v1`,
       api: "openai-completions",
       apiKey: "api-key",
       // Include both chat and text-to-image models (imageOnly) in the gongfeng
@@ -40,7 +44,7 @@ export function generatePiModels(
 
   for (const provider of config.commProxy ?? []) {
     providers[provider.name] = {
-      baseUrl: `http://localhost:${config.listen}/comm/${encodeURIComponent(provider.name)}/v1`,
+      baseUrl: `${baseUrl}/comm/${encodeURIComponent(provider.name)}/v1`,
       api: "openai-completions",
       apiKey: "api-key",
       models: provider.models.map((model) => ({ ...model })),
