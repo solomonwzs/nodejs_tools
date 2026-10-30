@@ -11,7 +11,13 @@ export function generatePiModels(
   const ip = config.ip ?? "localhost";
   // IPv6 literals need brackets in URLs (listen() uses the unbracketed address).
   const host = ip.includes(":") && !ip.startsWith("[") ? `[${ip}]` : ip;
-  const baseUrl = `http://${host}:${config.listen}`;
+  const address = new URL(`http://${host}:${config.listen}`);
+  // Unspecified addresses are for binding, not for client connections.
+  // URL parsing also normalizes expanded IPv6 unspecified addresses to [::].
+  if (address.hostname === "0.0.0.0" || address.hostname === "[::]") {
+    address.hostname = "localhost";
+  }
+  const baseUrl = address.origin;
 
   if (config.adamsProxy && adamsRegistry) {
     providers.adams = {
